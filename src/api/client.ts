@@ -12,7 +12,13 @@ import {
   PromoCode,
 } from '../types';
 
-const resolveBaseUrl = (): string => {
+export const getActiveApiUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const customUrl = localStorage.getItem('winterarc_admin_api_url');
+    if (customUrl && customUrl.trim() !== '') {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
+  }
   const envUrl = import.meta.env.VITE_API_BASE_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
     return envUrl.trim().replace(/\/+$/, '');
@@ -21,10 +27,18 @@ const resolveBaseUrl = (): string => {
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     return 'https://springboot-igj8.onrender.com';
   }
-  return 'http://localhost:8080';
+  return 'https://springboot-igj8.onrender.com';
 };
 
-const BASE_URL = resolveBaseUrl();
+export const setActiveApiUrl = (url: string) => {
+  if (typeof window !== 'undefined') {
+    if (url && url.trim()) {
+      localStorage.setItem('winterarc_admin_api_url', url.trim().replace(/\/+$/, ''));
+    } else {
+      localStorage.removeItem('winterarc_admin_api_url');
+    }
+  }
+};
 
 class ApiClient {
   private token: string | null = null;
@@ -47,7 +61,8 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${BASE_URL}${endpoint}`;
+    const baseUrl = getActiveApiUrl();
+    const url = `${baseUrl}${endpoint}`;
     const headers = new Headers(options.headers || {});
 
     if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -65,31 +80,32 @@ class ApiClient {
         headers,
       });
     } catch (err: any) {
-      // If direct fetch to BASE_URL failed (e.g. adblocker, local network, or mixed content),
-      // attempt relative fetch (which relies on Vite proxy locally or Vercel rewrites in production)
-      if (BASE_URL && (err.name === 'TypeError' || err.message?.includes('fetch'))) {
+      if (baseUrl && (err.name === 'TypeError' || err.message?.includes('fetch'))) {
         try {
           response = await fetch(endpoint, {
             ...options,
             headers,
           });
         } catch {
-          throw new Error(`Cannot connect to Winter Arc API at ${BASE_URL}. Please ensure the server is online.`);
+          throw new Error(`Cannot connect to Winter Arc API at ${baseUrl}. Please ensure the server is online and running.`);
         }
       } else {
-        throw new Error(`Cannot connect to Winter Arc API at ${BASE_URL}. Please ensure the server is online.`);
+        throw new Error(`Cannot connect to Winter Arc API at ${baseUrl}. Please ensure the server is online and running.`);
       }
     }
 
+    const data = await response.json().catch(() => ({}));
+
     if (response.status === 401) {
       this.setToken(null);
+      if (endpoint.includes('/api/auth/login')) {
+        throw new Error(data?.error || data?.message || 'Invalid email or password. Verify admin credentials.');
+      }
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
       throw new Error('Session expired or unauthorized. Please log in again.');
     }
-
-    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
       const errorMessage = data?.error || data?.message || `HTTP ${response.status}: Request failed`;
@@ -252,7 +268,8 @@ class ApiClient {
   }
 
   private async downloadCsv(endpoint: string, fallbackFilename: string): Promise<void> {
-    const url = `${BASE_URL}${endpoint}`;
+    const baseUrl = getActiveApiUrl();
+    const url = `${baseUrl}${endpoint}`;
     const headers = new Headers();
     if (this.token) {
       headers.set('Authorization', `Bearer ${this.token}`);
